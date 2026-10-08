@@ -1,0 +1,178 @@
+name: bigdata-ecosystem
+
+networks:
+  bigdata-net:
+    driver: bridge
+
+volumes:
+  hadoop_namenode:
+  hadoop_datanode:
+  spark_master_data:
+  spark_worker_data:
+  kafka_data:
+  mongo_data:
+  postgres_data:
+
+services:
+  # ==========================================
+  # HDFS (Hadoop Distributed File System)
+  # ==========================================
+  namenode:
+    image: apache/hadoop:3.4.0
+    container_name: hadoop-namenode
+    hostname: namenode
+    networks:
+      - bigdata-net
+    ports:
+      - "9870:9870" # HDFS NameNode Web UI
+      - "9000:9000" # HDFS IPC/RPC Port
+    environment:
+      CORE-SITE.XML_fs.defaultFS: hdfs://namenode:9000
+      HDFS-SITE.XML_dfs.namenode.rpc-address: namenode:9000
+      HDFS-SITE.XML_dfs.replication: 1
+    command: ["/bin/bash", "-c", "if [ ! -d /tmp/hadoop-root/dfs/name/current ]; then hdfs namenode -format -force; fi && hdfs namenode"]
+    volumes:
+      - hadoop_namenode:/tmp/hadoop-root
+
+  datanode:
+    image: apache/hadoop:3.4.0
+    container_name: hadoop-datanode
+    hostname: datanode
+    depends_on:
+      - namenode
+    networks:
+      - bigdata-net
+    ports:
+      - "9864:9864" # HDFS DataNode Web UI
+    environment:
+      CORE-SITE.XML_fs.defaultFS: hdfs://namenode:9000
+    command: ["hdfs", "datanode"]
+    volumes:
+      - hadoop_datanode:/tmp/hadoop-root
+
+
+  # ==========================================
+  # Apache Spark (Master & Worker)
+  # ==========================================
+  # ==========================================
+  # Apache Spark (Master & Worker)
+  # ==========================================
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    hostname: spark-master
+    networks:
+      - bigdata-net
+    ports:
+      - "8080:8080" # Spark Master Web UI
+      - "7077:7077" # Spark Master RPC Port
+    volumes:
+      - spark_master_data:/opt/spark/data
+    command: "/opt/spark/bin/spark-class org.apache.spark.deploy.master.Master"
+
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    hostname: spark-worker
+    depends_on:
+      - spark-master
+    networks:
+      - bigdata-net
+    ports:
+      - "8081:8081" # Spark Worker Web UI
+    volumes:
+      - spark_worker_data:/opt/spark/data
+    command: "/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+
+  # ==========================================
+  # Apache Kafka (Modo KRaft)
+  # ==========================================
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: kafka-broker
+    hostname: kafka
+    user: root
+    networks:
+      - bigdata-net
+    ports:
+      - "9092:9092" # Conexión interna dentro del red docker
+      - "9094:9094" # Conexión externa desde el Host
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:9094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9094"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+
+  # ==========================================
+  # Base de Datos NoSQL: MongoDB 7.0
+  # ==========================================
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    hostname: mongodb
+    networks:
+      - bigdata-net
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: adminpassword
+    volumes:
+      - mongo_data:/data/db
+
+  # ==========================================
+  # Base de Datos Relacional: PostgreSQL 16 Alpine
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-db
+    hostname: postgres
+    networks:
+      - bigdata-net
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: bigdata_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # ==========================================
+  # Workspace Interactivo: Jupyter + Anaconda / PySpark
+  # ==========================================
+  # ==========================================
+  # Workspace Interactivo: Jupyter + Anaconda / PySpark
+  # ==========================================
+  jupyter-workspace:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter-workspace
+    hostname: jupyter
+    depends_on:
+      - spark-master
+      - kafka
+      - postgres
+      - mongodb
+      - namenode
+    networks:
+      - bigdata-net
+    ports:
+      - "8888:8888"
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      GRANT_SUDO: "yes"
+    command: start-notebook.py --NotebookApp.token=''
+    volumes:
+      - ./notebooks:/home/jovyan/work
